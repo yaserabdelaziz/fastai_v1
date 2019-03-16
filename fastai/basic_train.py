@@ -17,7 +17,7 @@ def loss_batch(model:nn.Module, xb:Tensor, yb:Tensor, loss_func:OptLossFunc=None
     cb_handler = ifnone(cb_handler, CallbackHandler())
     if not is_listy(xb): xb = [xb]
     if not is_listy(yb): yb = [yb]
-    out = model(*xb)
+    out = model(xb+yb)
     out = cb_handler.on_loss_begin(out)
 
     if not loss_func: return to_detach(out), yb[0].detach()
@@ -253,6 +253,20 @@ class Learner():
         lf = self.loss_func if with_loss else None
         return get_preds(self.model, self.dl(ds_type), cb_handler=CallbackHandler(self.callbacks),
                          activ=_loss_func2activ(self.loss_func), loss_func=lf, n_batch=n_batch, pbar=pbar)
+
+    @staticmethod
+    def get_shape(inp):
+        ret = []
+
+        if type(inp) in [tuple, list]:
+            ret.append(len(inp))
+            ret.append(Learner.get_shape(inp[0]))
+        elif type(inp) is Tensor:
+            ret.append(inp.shape)
+        else:
+            ret.append(1)
+
+        return ret
 
     def pred_batch(self, ds_type:DatasetType=DatasetType.Valid, batch:Tuple=None, reconstruct:bool=False) -> List[Tensor]:
         "Return output of the model on one batch from `ds_type` dataset."

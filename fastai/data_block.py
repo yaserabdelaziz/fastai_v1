@@ -441,6 +441,14 @@ class ItemLists():
         self.process()
         return self
 
+    def label_from_item_lists(self, train_labels:ItemList, valid_labels:ItemList, **kwargs)->'LabelList':
+        "Use the labels in `train_labels` and `valid_labels` to label the data. `label_cls` will overwrite the default."
+        self.train = self.train._label_list(x=self.train, y=train_labels, **kwargs)
+        self.valid = self.valid._label_list(x=self.valid, y=valid_labels, **kwargs)
+        self.__class__ = LabelLists
+        self.process()
+        return self
+
     def transform(self, tfms:Optional[Tuple[TfmList,TfmList]]=(None,None), **kwargs):
         "Set `tfms` to be applied to the xs of the train and validation set."
         if not tfms: return self

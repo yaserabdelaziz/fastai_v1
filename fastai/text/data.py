@@ -126,13 +126,22 @@ class SortishSampler(Sampler):
 
 def pad_collate(samples:BatchSamples, pad_idx:int=1, pad_first:bool=True) -> Tuple[LongTensor, LongTensor]:
     "Function that collect samples and adds padding."
+    def pad(samples, pad_idx, pad_first, max_len=None):
+        if not max_len:
+            max_len = max([len(s) for s in samples])
+        res = torch.zeros(len(samples), max_len).long() + pad_idx
+        for i,s in enumerate(samples):
+            if pad_first: res[i,-len(s):] = LongTensor(s)
+            else:         res[i,:len(s):] = LongTensor(s)
+        return res
+
     samples = to_data(samples)
-    max_len = max([len(s[0]) for s in samples])
-    res = torch.zeros(len(samples), max_len).long() + pad_idx
-    for i,s in enumerate(samples):
-        if pad_first: res[i,-len(s[0]):] = LongTensor(s[0])
-        else:         res[i,:len(s[0]):] = LongTensor(s[0])
-    return res, tensor(np.array([s[1] for s in samples]))
+    inp = pad([s[0] for s in samples], pad_idx, pad_first)
+    if type(samples[0][1]) is np.ndarray:
+        out = pad([s[1] for s in samples], pad_idx, pad_first, max_len=20)
+    else:
+        out = tensor(np.array([s[1] for s in samples]))
+    return inp, out
 
 def _get_processor(tokenizer:Tokenizer=None, vocab:Vocab=None, chunksize:int=10000, max_vocab:int=60000,
                    min_freq:int=2, mark_fields:bool=False):
@@ -198,11 +207,19 @@ class TextDataBunch(DataBunch):
                 label_cols:IntsOrStrs=0, label_delim:str=None, **kwargs) -> DataBunch:
         "Create a `TextDataBunch` from DataFrames."
         p_kwargs, kwargs = split_kwargs_by_func(kwargs, _get_processor)
-        processor = _get_processor(tokenizer=tokenizer, vocab=vocab, **p_kwargs)
+        processor_x = _get_processor(tokenizer=tokenizer, vocab=vocab, **p_kwargs)
         if classes is None and is_listy(label_cols) and len(label_cols) > 1: classes = label_cols
-        src = ItemLists(path, TextList.from_df(train_df, path, cols=text_cols, processor=processor),
-                        TextList.from_df(valid_df, path, cols=text_cols, processor=processor))
-        if cls==TextLMDataBunch: src = src.label_for_lm() 
+        src = ItemLists(path, TextList.from_df(train_df, path, cols=text_cols, processor=processor_x),
+                        TextList.from_df(valid_df, path, cols=text_cols, processor=processor_x))
+        # if cls==TextLMDataBunch: src = src.label_for_lm()
+        if cls==TextLMDataBunch:
+            processor_y = _get_processor(tokenizer=tokenizer, vocab=vocab, **p_kwargs)
+            src = src.label_from_item_lists(
+                TextList.from_df(train_df, path, cols=label_cols, processor=processor_y),
+                TextList.from_df(valid_df, path, cols=label_cols, processor=processor_y)
+            )
+        # else: src = src.label_from_item_lists(TextList.from_df(train_df, path, cols=text_cols, processor=processor),
+        #                                       TextList.from_df(valid_df, path, cols=text_cols, processor=processor))
         else: src = src.label_from_df(cols=label_cols, classes=classes, label_delim=label_delim)
         if test_df is not None: src.add_test(TextList.from_df(test_df, path, cols=text_cols))
         return src.databunch(**kwargs)

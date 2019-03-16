@@ -7,11 +7,12 @@ from ..basic_data import *
 from ..datasets import untar_data
 from ..metrics import accuracy
 from ..train import GradientClipping
-from .models import get_language_model, get_rnn_classifier
+from .models import get_language_model, get_rnn_classifier, get_seq2seq
 from .transform import *
 
 __all__ = ['RNNLearner', 'LanguageLearner', 'convert_weights', 'lm_split',
-           'rnn_classifier_split', 'language_model_learner', 'text_classifier_learner', 'default_dropout']
+           'rnn_classifier_split', 'language_model_learner', 'text_classifier_learner', 'default_dropout',
+           'seq2seq_learner']
 
 default_dropout = {'language': np.array([0.25, 0.1, 0.2, 0.02, 0.15]),
                    'classifier': np.array([0.4,0.5,0.05,0.3,0.4])}
@@ -86,6 +87,19 @@ class RNNLearner(Learner):
             preds[1] = preds[1][reverse_sampler,:] if preds[1].dim() > 1 else preds[1][reverse_sampler]
         return(preds)
 
+def get_shape(inp):
+    ret = []
+
+    if type(inp) in [tuple, list]:
+        ret.append(len(inp))
+        ret.append(get_shape(inp[0]))
+    elif type(inp) is Tensor:
+        ret.append(inp.shape)
+    else:
+        ret.append(1)
+
+    return ret
+
 class LanguageLearner(RNNLearner):
     "Subclass of RNNLearner for predictions."
     
@@ -109,19 +123,34 @@ class LanguageLearner(RNNLearner):
         ds = self.dl(ds_type).dataset
         x,y = self.data.one_batch(ds_type, detach=False, denorm=False)
         preds = self.pred_batch(batch=(x,y))
-        y = y.view(*x.size())
-        z = preds.view(*x.size(),-1).argmax(dim=2)
+
+        # print('x', get_shape(x))
+        # print(x[0])
+        # print('y', get_shape(y))
+        # print(y[0])
+
+        # y = y.view(*x.size())
+        # z = preds.view(*x.size(),-1).argmax(dim=2)
+        # print('preds', get_shape(preds))
+        z = preds.argmax(dim=2)
+
+        # print('z', get_shape(z))
+        # print(z[0])
+
+        # print('grab_idx(x, 0)', grab_idx(x, 0))
+        # print('grab_idx(y, 0)', grab_idx(y, 0))
+
         xs = [ds.x.reconstruct(grab_idx(x, i)) for i in range(rows)]
-        ys = [ds.x.reconstruct(grab_idx(y, i)) for i in range(rows)]
-        zs = [ds.x.reconstruct(grab_idx(z, i)) for i in range(rows)]
+        ys = [ds.y.reconstruct(grab_idx(y, i)) for i in range(rows)]
+        zs = [ds.y.reconstruct(grab_idx(z, i)) for i in range(rows)]
 
         items = [['text', 'target', 'pred']]
-        for i, (x,y,z) in enumerate(zip(xs,ys,zs)):
+        for i, (x, y, z) in enumerate(zip(xs, ys, zs)):
             txt_x = ' '.join(x.text.split(' ')[:max_len])
-            txt_y = ' '.join(y.text.split(' ')[max_len:2*max_len])
-            txt_z = ' '.join(z.text.split(' ')[max_len:2*max_len])
+            txt_y = ' '.join(y.text.split(' ')[:max_len])
+            txt_z = ' '.join(z.text.split(' ')[:max_len])
             items.append([str(txt_x), str(txt_y), str(txt_z)])
-        display(HTML(text2html_table(items, ([34,33,33]))))
+        display(HTML(text2html_table(items, ([34, 33, 33]))))
 
 def language_model_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=1150, nl:int=3, pad_token:int=1,
                   drop_mult:float=1., tie_weights:bool=True, bias:bool=True, qrnn:bool=False, pretrained_model:str=None,
@@ -162,3 +191,51 @@ def text_classifier_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=
         learn.load_pretrained(*fnames, strict=False)
         learn.freeze()
     return learn
+
+def seq2seq_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=1150, nl:int=3, pad_token:int=1,
+               drop_mult:float=1., tie_weights:bool=True, qrnn:bool=False, max_len:int=20,
+               pretrained_model:str=None, pretrained_fnames:OptStrTuple=None, **kwargs) -> 'Seq2seqLearner':
+    "Create a `Learner` with a seq2seq model from `data`."
+    dps = default_dropout['language'] * drop_mult
+    # print(len(data.train_ds.x.vocab.itos))
+    # print(len(data.train_ds.y.vocab.itos))
+    # print(len(data.vocab.itos))
+    vocab_size_inp = len(data.train_ds.x.vocab.itos)
+    vocab_size_out = len(data.train_ds.y.vocab.itos)
+    model = get_seq2seq(vocab_size_inp, vocab_size_out, emb_sz, nh, nl, pad_token, max_len,
+                        input_p=dps[0], weight_p=dps[1], embed_p=dps[2], hidden_p=dps[3],
+                        tie_weights=tie_weights, qrnn=qrnn)
+    learn = LanguageLearner(data, model, bptt, split_func=rnn_classifier_split # TODO: Check this.
+                       , **kwargs)
+    if pretrained_model is not None:
+        model_path = untar_data(pretrained_model, data=False)
+        fnames = [list(model_path.glob(f'*.{ext}'))[0] for ext in ['pth', 'pkl']]
+        learn.load_pretrained(*fnames)
+        learn.freeze()
+    if pretrained_fnames is not None:
+        fnames = [learn.path / learn.model_dir / f'{fn}.{ext}' for fn, ext in zip(pretrained_fnames, ['pth', 'pkl'])]
+        learn.load_pretrained(*fnames)
+        learn.freeze()
+    return learn
+
+# def seq2seq_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=1150, nl:int=3, pad_token:int=1,
+#                drop_mult:float=1., qrnn:bool=False,max_len:int=70*20, lin_ftrs:Collection[int]=None,
+#                ps:Collection[float]=None, pretrained_model:str=None, **kwargs) -> 'Seq2seqLearner':
+#     "Create a RNN classifier from `data`."
+#     dps = default_dropout['classifier'] * drop_mult
+#     if lin_ftrs is None: lin_ftrs = [50]
+#     if ps is None:  ps = [0.1]
+#     # vocab_size, n_class = len(data.vocab.itos), data.c
+#     vocab_size = len(data.vocab.itos)
+#     # layers = [emb_sz*3] + lin_ftrs + [n_class]
+#     # ps = [dps[4]] + ps
+#     model = get_seq2seq(vocab_size, emb_sz, nh, nl, pad_token,
+#                         input_p=dps[0], weight_p=dps[1], embed_p=dps[2], hidden_p=dps[3], qrnn=qrnn)
+#     learn = RNNLearner(data, model, bptt, split_func=rnn_classifier_split # TODO: Check this.
+#                        , **kwargs)
+#     if pretrained_model is not None:
+#         model_path = untar_data(pretrained_model, data=False)
+#         fnames = [list(model_path.glob(f'*.{ext}'))[0] for ext in ['pth', 'pkl']]
+#         learn.load_pretrained(*fnames, strict=False)
+#         learn.freeze()
+#     return learn
