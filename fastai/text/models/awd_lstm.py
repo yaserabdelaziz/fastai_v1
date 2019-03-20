@@ -364,11 +364,12 @@ class DecoderRNN(BaseRNN):
     def __init__(self, vocab_size, emb_sz, max_len, hidden_size,
             sos_id, eos_id,
             n_layers=1, rnn_cell='gru', bidirectional=False,
-            input_dropout_p=0, dropout_p=0, use_attention=False):
+            input_dropout_p=0, dropout_p=0, use_attention=False, teacher_forcing_ratio=0.):
         super(DecoderRNN, self).__init__(vocab_size, max_len, hidden_size,
                 input_dropout_p, dropout_p,
                 n_layers, rnn_cell)
 
+        self.teacher_forcing_ratio = teacher_forcing_ratio
         self.bidirectional_encoder = bidirectional
         self.ndir = 2 if bidirectional else 1
         # self.rnn = self.rnn_cell(hidden_size, hidden_size, n_layers, batch_first=True, dropout=dropout_p)
@@ -433,16 +434,15 @@ class DecoderRNN(BaseRNN):
         # inputs = torch.tensor([self.eos_id]*encoder_hidden[0].shape[0], device=defaults.device)
         # inputs = None
         function = F.log_softmax
-        teacher_forcing_ratio = 1
         ret_dict = dict()
         if self.use_attention:
             ret_dict[DecoderRNN.KEY_ATTN_SCORE] = list()
 
         inputs, batch_size, max_length = self._validate_args(inputs, encoder_hidden, encoder_outputs,
-                                                             function, teacher_forcing_ratio)
+                                                             function, self.teacher_forcing_ratio)
         decoder_hidden = self._init_state(encoder_hidden)
 
-        use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
+        use_teacher_forcing = True if random.random() < self.teacher_forcing_ratio else False
 
         decoder_outputs = []
         sequence_symbols = []
@@ -548,14 +548,16 @@ class DecoderRNN(BaseRNN):
 # TODO: implement this function.
 def get_seq2seq(vocab_sz_inp:int, vocab_sz_out:int, emb_sz:int, n_hid:int, n_layers:int, pad_token:int, max_len:int,
                 tie_weights:bool=True, hidden_size=1150, bidir:bool=False, qrnn:bool=False,
-                hidden_p:float=0.2, input_p:float=0.6, embed_p:float=0.1, weight_p:float=0.5)->nn.Module:
+                hidden_p:float=0.2, input_p:float=0.6, embed_p:float=0.1, weight_p:float=0.5,
+                teacher_forcing_ratio:float=0)->nn.Module:
     "Create a seq2seq model."
     rnn_enc = RNNCore(vocab_sz_inp, emb_sz, n_hid=n_hid, n_layers=n_layers, pad_token=pad_token, qrnn=qrnn, bidir=bidir,
                       hidden_p=hidden_p, input_p=input_p, embed_p=embed_p, weight_p=weight_p)
     # enc = rnn_enc.encoder if tie_weights else None # TODO: tie encoder embedding weights to decoder last layer.
     # rnn_enc = RNNCore(bptt, max_seq, vocab_sz, emb_sz, n_hid, n_layers, pad_token=pad_token, bidir=bidir,
     #                   qrnn=qrnn, hidden_p=hidden_p, input_p=input_p, embed_p=embed_p, weight_p=weight_p)
-    rnn_dec = DecoderRNN(vocab_sz_out, emb_sz, max_len, hidden_size, 0, 1, n_layers, 'lstm', bidir, input_p, 0.1, True) # bptt, max_seq, hidden_size, vocab_sz, dropout_p=0.1, max_length=10)
+    rnn_dec = DecoderRNN(vocab_sz_out, emb_sz, max_len, hidden_size, 0, 1, n_layers, 'lstm', bidir, input_p, 0.1, True,
+                         teacher_forcing_ratio=teacher_forcing_ratio) # bptt, max_seq, hidden_size, vocab_sz, dropout_p=0.1, max_length=10)
     model = SequentialRNN(rnn_enc, rnn_dec)
     model.reset()
     return model

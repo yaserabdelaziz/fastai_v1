@@ -194,7 +194,8 @@ def text_classifier_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=
 
 def seq2seq_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=1150, nl:int=3, pad_token:int=1,
                drop_mult:float=1., tie_weights:bool=True, qrnn:bool=False, max_len:int=20,
-               pretrained_model:str=None, pretrained_fnames:OptStrTuple=None, **kwargs) -> 'Seq2seqLearner':
+               pretrained_model:str=None, pretrained_fnames:OptStrTuple=None, teacher_forcing_ratio:float=0.,
+               **kwargs) -> 'Seq2seqLearner':
     "Create a `Learner` with a seq2seq model from `data`."
     dps = default_dropout['language'] * drop_mult
     # print(len(data.train_ds.x.vocab.itos))
@@ -204,7 +205,7 @@ def seq2seq_learner(data:DataBunch, bptt:int=70, emb_sz:int=400, nh:int=1150, nl
     vocab_size_out = len(data.train_ds.y.vocab.itos)
     model = get_seq2seq(vocab_size_inp, vocab_size_out, emb_sz, nh, nl, pad_token, max_len,
                         input_p=dps[0], weight_p=dps[1], embed_p=dps[2], hidden_p=dps[3],
-                        tie_weights=tie_weights, qrnn=qrnn)
+                        tie_weights=tie_weights, qrnn=qrnn, teacher_forcing_ratio=teacher_forcing_ratio)
     learn = LanguageLearner(data, model, bptt, split_func=rnn_classifier_split # TODO: Check this.
                        , **kwargs)
     if pretrained_model is not None:
