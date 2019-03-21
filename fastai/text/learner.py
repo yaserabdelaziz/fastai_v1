@@ -139,6 +139,7 @@ class LanguageLearner(RNNLearner):
 
         # print('grab_idx(x, 0)', grab_idx(x, 0))
         # print('grab_idx(y, 0)', grab_idx(y, 0))
+        print('grab_idx(z, 0)', grab_idx(z, 0))
 
         xs = [ds.x.reconstruct(grab_idx(x, i)) for i in range(rows)]
         ys = [ds.y.reconstruct(grab_idx(y, i)) for i in range(rows)]
