@@ -400,10 +400,8 @@ class DecoderRNN(BaseRNN):
         raw_output = self.input_dropout(embedded)
 
         for l, rnn in enumerate(self.rnns):
-            raw_output, _ = rnn(raw_output, hidden[l])
+            raw_output, hidden[l] = rnn(raw_output, hidden[l])
             if l == self.n_layers - 1: output = raw_output
-
-        # output, hidden = self.rnn(embedded, hidden)
 
         attn = None
         if self.use_attention:
