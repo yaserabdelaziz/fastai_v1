@@ -213,7 +213,7 @@ class TextDataBunch(DataBunch):
                         TextList.from_df(valid_df, path, cols=text_cols, processor=processor_x))
         # if cls==TextLMDataBunch: src = src.label_for_lm()
         if cls==TextLMDataBunch:
-            processor_y = _get_processor(tokenizer=tokenizer, vocab=vocab, **p_kwargs)
+            processor_y = _get_processor(tokenizer=tokenizer, vocab=processor_x[1].vocab, **p_kwargs)
             src = src.label_from_item_lists(
                 TextList.from_df(train_df, path, cols=label_cols, processor=processor_y),
                 TextList.from_df(valid_df, path, cols=label_cols, processor=processor_y)
