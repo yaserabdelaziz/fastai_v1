@@ -125,9 +125,26 @@ class Vocab():
         "Convert a list of tokens `t` to their ids."
         return [self.stoi[w] for w in t]
 
-    def textify(self, nums:Collection[int], sep=' ') -> List[str]:
+    def textify(self, nums:Collection[int], sep=' ', article_oovs: list=None) -> List[str]:
         "Convert a list of `nums` to their tokens."
-        return sep.join([self.itos[i] for i in nums])
+        vocab_size = len(self.itos)
+        words = []
+        for i in nums:
+            if i < vocab_size:
+                w = self.itos[i] # might be [UNK]
+            else:  # w is OOV
+                assert article_oovs is not None, "Error: model produced a word ID that isn't in the vocabulary. This should not happen in baseline (no pointer-generator) mode"
+                article_oov_idx = i - vocab_size
+                if article_oov_idx < len(article_oovs):
+                    w = article_oovs[article_oov_idx]
+                else:  # i doesn't correspond to an article oov
+                    print(sep.join(words))
+                    raise ValueError(
+                        'Error: model produced word ID %i which corresponds to article OOV %i but this example only has %i article OOVs' % (
+                        i, article_oov_idx, len(article_oovs)))
+            words.append(w)
+        return sep.join(words)
+        # return sep.join([self.itos[i] for i in nums])
 
     def __getstate__(self):
         return {'itos':self.itos}

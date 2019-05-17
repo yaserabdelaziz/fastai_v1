@@ -113,7 +113,7 @@ class RNNCore(nn.Module):
         self.hidden_dps = nn.ModuleList([RNNDropout(hidden_p) for l in range(n_layers)])
 
     def forward(self, input:LongTensor)->Tuple[Tensor,Tensor]:
-        input, output = input
+        input, enc_batch_extend_vocab, extra_zeros, _, output = input
         bs,sl = input.size()
         if bs!=self.bs:
             self.bs=bs
@@ -128,7 +128,7 @@ class RNNCore(nn.Module):
             outputs.append(raw_output)
         hidden = new_hidden.copy()
         self.hidden = to_detach(new_hidden, cpu=False)
-        return raw_outputs, outputs, hidden, output
+        return raw_outputs, outputs, hidden, output, enc_batch_extend_vocab, extra_zeros
 
     def _one_hidden(self, l:int)->Tensor:
         "Return one hidden state."
@@ -351,10 +351,11 @@ class Attention(nn.Module):
 
         # concat -> (batch, out_len, 2*dim)
         combined = torch.cat((mix, output), dim=2)
+
         # output -> (batch, out_len, dim)
         output = torch.tanh(self.linear_out(combined.view(-1, 2 * hidden_size))).view(batch_size, -1, hidden_size)
 
-        return output, attn
+        return output, attn, combined
 
 class DecoderRNN(BaseRNN):
     KEY_ATTN_SCORE = 'attention_score'
@@ -393,7 +394,11 @@ class DecoderRNN(BaseRNN):
         self.out = nn.Linear(emb_sz, self.output_size)
         self.emb_sz = emb_sz
 
-    def forward_step(self, input_var, hidden, encoder_outputs, function):
+        self.pointer_gen = True
+        if self.pointer_gen:
+            self.p_gen_linear = nn.Linear(3 * emb_sz, 1)
+
+    def forward_step(self, input_var, hidden, encoder_outputs, enc_batch_extend_vocab, extra_zeros, function):
         batch_size = input_var.size(0)
         output_size = input_var.size(1)
         embedded = self.embedding(input_var)
@@ -405,13 +410,33 @@ class DecoderRNN(BaseRNN):
 
         attn = None
         if self.use_attention:
-            output, attn = self.attention(output, encoder_outputs)
+            output, attn, c_t = self.attention(output, encoder_outputs)
 
-        predicted_softmax = function(self.out(output.contiguous().view(-1, self.emb_sz)), dim=1).view(batch_size, output_size, -1)
-        return predicted_softmax, hidden, attn
+        if self.pointer_gen:
+            p_gen_input = torch.cat((c_t, embedded), 2)  # B x (3*emb_dim)
+            p_gen = self.p_gen_linear(p_gen_input)
+            p_gen = torch.sigmoid(p_gen)
+
+        vocab_dist = function(self.out(output.contiguous().view(-1, self.emb_sz)), dim=1).view(batch_size,
+                                                                                               output_size, -1)
+
+        if self.pointer_gen:
+            vocab_dist_ = p_gen * vocab_dist
+            attn_dist_ = (1 - p_gen) * attn
+
+            if extra_zeros is not None:
+                vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], 2)
+
+            enc_batch_extend_vocab = enc_batch_extend_vocab.unsqueeze(1).expand(-1,attn_dist_.size(1),-1)
+
+            final_dist = vocab_dist_.scatter_add(2, enc_batch_extend_vocab, attn_dist_)
+        else:
+            final_dist = output
+
+        return final_dist, hidden, attn
 
     def forward(self, input:Tuple[Tensor,Tuple])->Tuple[Tensor,Tensor,dict]:
-        raw_outputs, encoder_outputs, encoder_hidden, inputs = input
+        raw_outputs, encoder_outputs, encoder_hidden, inputs, enc_batch_extend_vocab, extra_zeros = input
         outputs = encoder_outputs
         # encoder_outputs, encoder_hidden = input
 
@@ -469,6 +494,7 @@ class DecoderRNN(BaseRNN):
                 initial_input = initial_input.cuda()
             decoder_input = torch.cat((initial_input, decoder_input), dim=1)
             decoder_output, decoder_hidden, attn = self.forward_step(decoder_input, decoder_hidden, encoder_outputs,
+                                                                     enc_batch_extend_vocab, extra_zeros,
                                                                      function=function)
 
             for di in range(decoder_output.size(1)):
@@ -481,8 +507,9 @@ class DecoderRNN(BaseRNN):
         else:
             decoder_input = inputs[:, 0].unsqueeze(1)
             for di in range(max_length):
-                decoder_output, decoder_hidden, step_attn = self.forward_step(decoder_input, decoder_hidden, encoder_outputs,
-                                                                         function=function)
+                decoder_output, decoder_hidden, step_attn = self.forward_step(decoder_input, decoder_hidden,
+                                                                              encoder_outputs, enc_batch_extend_vocab,
+                                                                              extra_zeros, function=function)
                 step_output = decoder_output.squeeze(1)
                 symbols = decode(di, step_output, step_attn)
                 decoder_input = symbols
@@ -491,6 +518,7 @@ class DecoderRNN(BaseRNN):
         ret_dict[DecoderRNN.KEY_LENGTH] = lengths.tolist()
 
         decoder_outputs = torch.stack(decoder_outputs).transpose(0, 1).contiguous()
+        # print('decoder_outputs', get_shape(decoder_outputs))
 
         # print(get_shape(decoder_outputs))
         return decoder_outputs, raw_outputs, outputs

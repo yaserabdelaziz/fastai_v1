@@ -211,13 +211,20 @@ class TextDataBunch(DataBunch):
         if classes is None and is_listy(label_cols) and len(label_cols) > 1: classes = label_cols
         src = ItemLists(path, TextList.from_df(train_df, path, cols=text_cols, processor=processor_x),
                         TextList.from_df(valid_df, path, cols=text_cols, processor=processor_x))
+        # src.train.vocab = processor_x[1].vocab
+        # print(type(processor_x[1].vocab))
+        # print(type(src.train.vocab))
+        # print(type(src.train[0]))
         # if cls==TextLMDataBunch: src = src.label_for_lm()
         if cls==TextLMDataBunch:
             processor_y = _get_processor(tokenizer=tokenizer, vocab=processor_x[1].vocab, **p_kwargs)
+            # print(type(src.train[0]))
             src = src.label_from_item_lists(
-                TextList.from_df(train_df, path, cols=label_cols, processor=processor_y),
-                TextList.from_df(valid_df, path, cols=label_cols, processor=processor_y)
+                TextList.from_df(train_df, path, cols=label_cols, processor=processor_y, x = src.train),
+                TextList.from_df(valid_df, path, cols=label_cols, processor=processor_y, x = src.valid)
             )
+            # for i in range(6):
+            #     print(src.train[i][0].data)
         # else: src = src.label_from_item_lists(TextList.from_df(train_df, path, cols=text_cols, processor=processor),
         #                                       TextList.from_df(valid_df, path, cols=text_cols, processor=processor))
         else: src = src.label_from_df(cols=label_cols, classes=classes, label_delim=label_delim)
@@ -286,7 +293,11 @@ def open_text(fn:PathOrStr, enc='utf-8'):
 
 class Text(ItemBase):
     "Basic item for <code>text</code> data in numericalized `ids`."
-    def __init__(self, ids, text): self.data,self.text = np.array(ids, dtype=np.int64),text
+    def __init__(self, ids, text):
+        if isinstance(ids[0], np.int64) or isinstance(ids[0], int): self.data = np.array(ids, dtype=np.int64)
+        else: self.data = [np.array(ids[0], dtype=np.int64), ids[1], ids[2], ids[3]]
+        self.text= text
+    # def __init__(self, ids, text): self.data,self.text = np.array(ids, dtype=np.int64),text
     def __str__(self):  return str(self.text)
 
 class TokenizeProcessor(PreProcessor):
@@ -298,20 +309,87 @@ class TokenizeProcessor(PreProcessor):
     def process(self, ds):
         ds.items = _join_texts(ds.items, self.mark_fields)
         tokens = []
-        for i in progress_bar(range(0,len(ds),self.chunksize), leave=False):
+        for i in progress_bar(range(0,len(ds),self.chunksize), leave=True):
             tokens += self.tokenizer.process_all(ds.items[i:i+self.chunksize])
         ds.items = tokens
 
 class NumericalizeProcessor(PreProcessor):
     "`PreProcessor` that numericalizes the tokens in `ds`."
-    def __init__(self, ds:ItemList=None, vocab:Vocab=None, max_vocab:int=60000, min_freq:int=2):
+    def __init__(self, ds:ItemList=None, vocab:Vocab=None, max_vocab:int=60000, min_freq:int=2, article_oovs:list=None):
         vocab = ifnone(vocab, ds.vocab if ds is not None else None)
-        self.vocab,self.max_vocab,self.min_freq = vocab,max_vocab,min_freq
+        self.vocab,self.max_vocab,self.min_freq,self.article_oovs = vocab,max_vocab,min_freq,article_oovs
 
-    def process_one(self,item): return np.array(self.vocab.numericalize(item), dtype=np.int64)
+    def process_one(self,item):
+        if self.is_x:
+            return [np.array(self.vocab.numericalize(item[0]), dtype=np.int64), item[1], item[2], item[3]]
+        else: return item #np.array(self.vocab.numericalize(item[0]), dtype=np.int64)
+
+    def article2ids(self, ds:Collection):
+        unk_id = self.vocab.stoi[UNK]
+        vocab_size = len(self.vocab.itos)
+        # print('vocab_size', vocab_size)
+        # print('أحداث', self.vocab.stoi['أحداث'])
+        items = []
+        for idx, item in enumerate(ds.items):
+            ids = []
+            oovs = []
+            for w in item:
+                i = self.vocab.stoi[w]
+                if i == unk_id:  # If w is OOV
+                    if w not in oovs:  # Add to list of OOVs
+                        oovs.append(w)
+                    oov_num = oovs.index(w)  # This is 0 for the first article OOV, 1 for the second article OOV...
+                    ids.append(
+                        vocab_size + oov_num
+                    )  # This is e.g. 50000 for the first article OOV, 50001 for the second...
+                else:
+                    ids.append(i)
+            items.append([item, ids, oovs, idx])
+        ds.items = items
+
+    def abstract2ids(self, ds:Collection):
+        unk_id = self.vocab.stoi[UNK]
+        vocab_size = len(self.vocab.itos)
+        # print('self.vocab.stoi', self.vocab.stoi)
+        # print('vocab(itos)', len(self.vocab.itos))
+        # print('vocab_size', vocab_size)
+        # print('أحداث', self.vocab.stoi['أحداث'])
+        items = []
+        for item, article_oovs in zip(ds.items, ds.articles_oovs):
+            ids = []
+            for w in item:
+                i = self.vocab.stoi[w]
+                if i == unk_id:  # If w is an OOV word
+                    # print(w, article_oovs)
+                    if w in article_oovs:  # If w is an in-article OOV
+                        # print('yes')
+                        vocab_idx = vocab_size + article_oovs.index(w)  # Map to its temporary article OOV number
+                        ids.append(vocab_idx)
+                    else:  # If w is an out-of-article OOV
+                        # print('no')
+                        ids.append(unk_id)  # Map to the UNK token id
+                else:
+                    ids.append(i)
+            items.append(ids)
+        ds.items = items
+
     def process(self, ds):
-        if self.vocab is None: self.vocab = Vocab.create(ds.items, self.max_vocab, self.min_freq)
+        if self.vocab is None:
+            if ds.x and ds.x.vocab:
+                self.vocab = ds.x.vocab
+            else:
+                self.vocab = Vocab.create(ds.items, self.max_vocab, self.min_freq)
         ds.vocab = self.vocab
+        self.is_x = ds.x is None
+        if ds.x:
+            ds.articles_oovs = [item.data[2] for item in ds.x]
+            # print('abs', ds.articles_oovs)
+            self.abstract2ids(ds)
+        else:
+            self.article2ids(ds)
+            ds.articles_oovs = [item[2] for item in ds.items]
+            # print('art', ds.articles_oovs)
+            # print([item[3] for item in ds.items])
         super().process(ds)
 
 class OpenFileProcessor(PreProcessor):
@@ -332,16 +410,24 @@ class TextList(ItemList):
 
     def get(self, i):
         o = super().get(i)
-        return Text(o, self.vocab.textify(o))
+        if isinstance(o[0], np.int64) or isinstance(o[0], int):
+            text = self.vocab.textify(o, article_oovs=self.articles_oovs[i])
+        else:
+            # print(type(o))
+            # print(o)
+            text = self.vocab.textify(o[0], article_oovs=self.articles_oovs[i])
+        return Text(o, text)
 
     def label_for_lm(self, **kwargs):
         "A special labelling method for language models."
         self.__class__ = LMTextList
         return self.label_const(0, label_cls=LMLabel)
 
-    def reconstruct(self, t:Tensor):
+    def reconstruct(self, t:Tensor, i:int):
         idx = (t != self.pad_idx).nonzero().min()
-        return Text(t[idx:], self.vocab.textify(t[idx:]))
+        # print(i)
+        # print(len(self.articles_oovs))
+        return Text(t[idx:], self.vocab.textify(t[idx:], article_oovs=self.articles_oovs[i]))
 
     @classmethod
     def from_folder(cls, path:PathOrStr='.', extensions:Collection[str]=text_extensions, vocab:Vocab=None,

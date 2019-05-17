@@ -618,6 +618,7 @@ class LabelList(Dataset):
 
     def process(self, xp:PreProcessor=None, yp:PreProcessor=None, name:str=None):
         "Launch the processing on `self.x` and `self.y` with `xp` and `yp`."
+        self.x.process(xp)
         self.y.process(yp)
         if getattr(self.y, 'filter_missing_y', False):
             filt = array([o is None for o in self.y])
@@ -632,7 +633,6 @@ class LabelList(Dataset):
                         if len(warnings) > 5: self.warn += "..."
                     p.warns = []
                 self.x,self.y = self.x[~filt],self.y[~filt]
-        self.x.process(xp)
         return self
 
     def transform(self, tfms:TfmList, tfm_y:bool=None, **kwargs):

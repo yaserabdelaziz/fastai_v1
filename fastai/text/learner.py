@@ -122,7 +122,11 @@ class LanguageLearner(RNNLearner):
         "Show `rows` result of predictions on `ds_type` dataset."
         ds = self.dl(ds_type).dataset
         x,y = self.data.one_batch(ds_type, detach=False, denorm=False)
+
         preds = self.pred_batch(batch=(x,y))
+
+        ids = x[3]
+        x = x[1]
 
         # print('x', get_shape(x))
         # print(x[0])
@@ -132,7 +136,9 @@ class LanguageLearner(RNNLearner):
         # y = y.view(*x.size())
         # z = preds.view(*x.size(),-1).argmax(dim=2)
         # print('preds', get_shape(preds))
+        # print('preds', preds)
         z = preds.argmax(dim=2)
+        # print('z', z)
 
         # print('z', get_shape(z))
         # print(z[0])
@@ -141,9 +147,9 @@ class LanguageLearner(RNNLearner):
         # print('grab_idx(y, 0)', grab_idx(y, 0))
         # print('grab_idx(z, 0)', grab_idx(z, 0))
 
-        xs = [ds.x.reconstruct(grab_idx(x, i)) for i in range(rows)]
-        ys = [ds.y.reconstruct(grab_idx(y, i)) for i in range(rows)]
-        zs = [ds.y.reconstruct(grab_idx(z, i)) for i in range(rows)]
+        xs = [ds.x.reconstruct(grab_idx(x, i), ids[i]) for i in range(rows)]
+        ys = [ds.y.reconstruct(grab_idx(y, i), ids[i]) for i in range(rows)]
+        zs = [ds.y.reconstruct(grab_idx(z, i), ids[i]) for i in range(rows)]
 
         items = [['text', 'target', 'pred']]
         for i, (x, y, z) in enumerate(zip(xs, ys, zs)):
