@@ -401,8 +401,14 @@ class DecoderRNN(BaseRNN):
     def forward_step(self, input_var, hidden, encoder_outputs, enc_batch_extend_vocab, extra_zeros, function):
         batch_size = input_var.size(0)
         output_size = input_var.size(1)
-        raw_output = self.embedding(input_var)
-        # raw_output = self.input_dropout(embedded)
+        # print(input_var)
+        # print(self.output_size)
+        # torch.clamp_(input_var,min=0,max=self.output_size-1)
+        input_var[input_var >= self.output_size] = 0
+        # print(input_var)
+        # print(self.output_size)
+        embedded = self.embedding(input_var)
+        raw_output = self.input_dropout(embedded)
 
         for l, rnn in enumerate(self.rnns):
             raw_output, hidden[l] = rnn(raw_output, hidden[l])
@@ -420,8 +426,8 @@ class DecoderRNN(BaseRNN):
         vocab_dist = function(self.out(output.contiguous().view(-1, self.emb_sz)), dim=1).view(batch_size,
                                                                                                output_size, -1)
 
-        print('p_gen::shape', get_shape(p_gen))
-        print('vocab_dist::shape', get_shape(vocab_dist))
+        # print('p_gen::shape', get_shape(p_gen))
+        # print('vocab_dist::shape', get_shape(vocab_dist))
 
         if self.pointer_gen:
             vocab_dist_ = p_gen * vocab_dist
@@ -493,7 +499,7 @@ class DecoderRNN(BaseRNN):
         if use_teacher_forcing:
             decoder_input = inputs[:, :-1]
             initial_input = torch.LongTensor([self.sos_id] * batch_size).view(batch_size, 1)
-            if torch.cuda.is_available():
+            if defaults.device == 'cuda' and torch.cuda.is_available():
                 initial_input = initial_input.cuda()
             decoder_input = torch.cat((initial_input, decoder_input), dim=1)
             decoder_output, decoder_hidden, attn = self.forward_step(decoder_input, decoder_hidden, encoder_outputs,
