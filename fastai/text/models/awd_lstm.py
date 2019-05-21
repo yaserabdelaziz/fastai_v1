@@ -434,7 +434,7 @@ class DecoderRNN(BaseRNN):
             attn_dist_ = (1 - p_gen) * attn
 
             if extra_zeros is not None:
-                vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], 2)
+                vocab_dist_ = torch.cat([vocab_dist_, extra_zeros[:,:vocab_dist_.shape[1],:]], 2)
 
             enc_batch_extend_vocab = enc_batch_extend_vocab.unsqueeze(1).expand(-1,attn_dist_.size(1),-1)
 
