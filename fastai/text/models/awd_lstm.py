@@ -514,7 +514,12 @@ class DecoderRNN(BaseRNN):
                     step_attn = None
                 decode(di, step_output, step_attn)
         else:
-            decoder_input = inputs[:, 0].unsqueeze(1)
+            # decoder_input = inputs[:, 0].unsqueeze(1)
+            initial_input = torch.LongTensor([self.sos_id] * batch_size).view(batch_size, 1)
+            if defaults.device == 'cuda' and torch.cuda.is_available():
+                initial_input = initial_input.cuda()
+            decoder_input = initial_input
+            # decoder_input = torch.cat((initial_input, decoder_input), dim=1)
             for di in range(max_length):
                 decoder_output, decoder_hidden, step_attn = self.forward_step(decoder_input, decoder_hidden,
                                                                               encoder_outputs, enc_batch_extend_vocab,
@@ -577,7 +582,7 @@ class DecoderRNN(BaseRNN):
                 inputs = inputs.cuda()
             max_length = self.max_length
         else:
-            max_length = inputs.size(1) - 1 # minus the start of sequence symbol
+            max_length = inputs.size(1)# - 1 # minus the start of sequence symbol
 
         return inputs, batch_size, max_length
 
