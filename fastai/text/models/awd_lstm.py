@@ -522,6 +522,7 @@ class DecoderRNN(BaseRNN):
                 step_output = decoder_output.squeeze(1)
                 symbols = decode(di, step_output, step_attn)
                 decoder_input = symbols
+                decoder_input[decoder_input >= self.output_size] = 0
 
         ret_dict[DecoderRNN.KEY_SEQUENCE] = sequence_symbols
         ret_dict[DecoderRNN.KEY_LENGTH] = lengths.tolist()
