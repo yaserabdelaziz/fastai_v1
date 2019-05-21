@@ -419,7 +419,7 @@ class DecoderRNN(BaseRNN):
             output, attn, c_t = self.attention(output, encoder_outputs)
 
         if self.pointer_gen:
-            p_gen_input = torch.cat((c_t, embedded), 2)  # B x (3*emb_dim)
+            p_gen_input = torch.cat((c_t, embedded), 2)  # B x seq_len x (3*emb_dim)
             p_gen = self.p_gen_linear(p_gen_input)
             p_gen = torch.sigmoid(p_gen)
 
@@ -436,12 +436,13 @@ class DecoderRNN(BaseRNN):
             if extra_zeros is not None:
                 vocab_dist_ = torch.cat([vocab_dist_, extra_zeros[:,:vocab_dist_.shape[1],:]], 2)
 
-            enc_batch_extend_vocab = enc_batch_extend_vocab.unsqueeze(1).expand(-1,attn_dist_.size(1),-1)
+            enc_batch_extend_vocab = enc_batch_extend_vocab.unsqueeze(1).expand(-1,attn_dist_.shape[1],-1)
 
             final_dist = vocab_dist_.scatter_add(2, enc_batch_extend_vocab, attn_dist_)
         else:
             final_dist = output
 
+        final_dist = function(final_dist, dim=2)
         return final_dist, hidden, attn
 
     def forward(self, input:Tuple[Tensor,Tuple])->Tuple[Tensor,Tensor,dict]:
@@ -527,7 +528,6 @@ class DecoderRNN(BaseRNN):
                 step_output = decoder_output.squeeze(1)
                 symbols = decode(di, step_output, step_attn)
                 decoder_input = symbols
-                decoder_input[decoder_input >= self.output_size] = 0
 
         ret_dict[DecoderRNN.KEY_SEQUENCE] = sequence_symbols
         ret_dict[DecoderRNN.KEY_LENGTH] = lengths.tolist()
