@@ -394,7 +394,7 @@ class DecoderRNN(BaseRNN):
         self.out = nn.Linear(emb_sz, self.output_size)
         self.emb_sz = emb_sz
 
-        self.pointer_gen = False
+        self.pointer_gen = True
         if self.pointer_gen:
             self.p_gen_linear = nn.Linear(3 * emb_sz, 1)
 
@@ -441,7 +441,7 @@ class DecoderRNN(BaseRNN):
             final_dist = vocab_dist_.scatter_add(2, enc_batch_extend_vocab, attn_dist_)
             final_dist = function(final_dist, dim=2)
         else:
-            final_dist = output
+            final_dist = vocab_dist
 
         return final_dist, hidden, attn
 
