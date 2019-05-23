@@ -5,7 +5,7 @@ __all__ = ['AdaptiveConcatPool2d', 'BCEWithLogitsFlat', 'BCEFlat', 'MSELossFlat'
            'Flatten', 'Lambda', 'PoolFlatten', 'ResizeBatch', 'bn_drop_lin', 'conv2d', 'conv2d_trans', 'conv_layer',
            'embedding', 'simple_cnn', 'NormType', 'relu', 'batchnorm_2d', 'trunc_normal_', 'PixelShuffle_ICNR', 'icnr',
            'NoopLoss', 'WassersteinLoss', 'SelfAttention', 'SequentialEx', 'MergeLayer', 'res_block', 'sigmoid_range',
-           'SigmoidRange', 'PartialLayer', 'FlattenedLoss', 'BatchNorm1dFlat']
+           'SigmoidRange', 'PartialLayer', 'FlattenedLoss', 'BatchNorm1dFlat', 'PointerGeneratorLoss']
 
 class Lambda(nn.Module):
     "An easy way to create a pytorch layer for a simple `func`."
@@ -211,6 +211,50 @@ class PixelShuffle_ICNR(nn.Module):
     def forward(self,x):
         x = self.shuf(self.relu(self.conv(x)))
         return self.blur(self.pad(x)) if self.blur else x
+
+class PointerGeneratorLoss():
+    "Same as `func`, but flattens input and target."
+
+    def __init__(self, axis: int = -1, floatify: bool = False, is_2d: bool = True):
+        self.axis, self.floatify, self.is_2d = axis, floatify, is_2d
+
+    # def __repr__(self): return ""
+    # @property
+    # def reduction(self): return self.func.reduction
+    # @reduction.setter
+    # def reduction(self, v): self.func.reduction = v
+
+    def __call__(self, input:Tensor, target:Tensor, **kwargs)->Rank0Tensor:
+        input, dec_padding_mask, dec_lens = input
+        input = input.transpose(self.axis,-1).contiguous()
+        target = target.transpose(self.axis,-1).contiguous()
+        max_length = input.shape[1]
+        if self.floatify: target = target.float()
+
+        step_losses = []
+        for di in range(max_length):
+            inp = input[:,di,:]
+            tar = target[:,di]
+            inp = inp.view(-1, inp.shape[-1]) if self.is_2d else inp.view(-1)
+            gold_probs = torch.gather(inp, 1, tar.unsqueeze(1)).squeeze()
+            # print('gold_probs', gold_probs)
+            eps = 1e-12
+            step_loss = -torch.log(gold_probs + eps)
+            # print('step_loss', step_loss)
+
+            step_mask = dec_padding_mask[:, di]
+            step_loss = step_loss * step_mask
+            step_losses.append(step_loss)
+
+        sum_losses = torch.sum(torch.stack(step_losses, 1), 1)
+        # print('sum_losses', sum_losses)
+        batch_avg_loss = sum_losses / dec_lens
+        # print('batch_avg_loss', batch_avg_loss)
+        loss = torch.mean(batch_avg_loss)
+        # print('loss', loss)
+        return loss
+
+        # return self.func.__call__(input, target.view(-1), **kwargs)
 
 class FlattenedLoss():
     "Same as `func`, but flattens input and target."

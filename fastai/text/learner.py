@@ -137,7 +137,7 @@ class LanguageLearner(RNNLearner):
         # z = preds.view(*x.size(),-1).argmax(dim=2)
         # print('preds', get_shape(preds))
         # print('preds', preds)
-        z = preds.argmax(dim=2)
+        z = preds[0].argmax(dim=2)
         # print('z', z)
 
         # print('z', get_shape(z))

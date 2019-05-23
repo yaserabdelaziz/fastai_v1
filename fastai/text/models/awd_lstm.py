@@ -113,7 +113,7 @@ class RNNCore(nn.Module):
         self.hidden_dps = nn.ModuleList([RNNDropout(hidden_p) for l in range(n_layers)])
 
     def forward(self, input:LongTensor)->Tuple[Tensor,Tensor]:
-        input, enc_batch_extend_vocab, extra_zeros, _, output = input
+        input, enc_batch_extend_vocab, extra_zeros, _, dec_padding_mask, dec_lens, output = input
         bs,sl = input.size()
         if bs!=self.bs:
             self.bs=bs
@@ -128,7 +128,7 @@ class RNNCore(nn.Module):
             outputs.append(raw_output)
         hidden = new_hidden.copy()
         self.hidden = to_detach(new_hidden, cpu=False)
-        return raw_outputs, outputs, hidden, output, enc_batch_extend_vocab, extra_zeros
+        return raw_outputs, outputs, hidden, output, enc_batch_extend_vocab, extra_zeros, dec_padding_mask, dec_lens
 
     def _one_hidden(self, l:int)->Tensor:
         "Return one hidden state."
@@ -420,18 +420,18 @@ class DecoderRNN(BaseRNN):
 
         if self.pointer_gen:
             p_gen_input = torch.cat((c_t, embedded), 2)  # B x seq_len x (3*emb_dim)
-            p_gen = self.p_gen_linear(p_gen_input)
+            p_gen = self.p_gen_linear(p_gen_input)  # B x seq_len x 1
             p_gen = torch.sigmoid(p_gen)
 
-        vocab_dist = function(self.out(output.contiguous().view(-1, self.emb_sz)), dim=1).view(batch_size,
+        vocab_dist = F.softmax(self.out(output.contiguous().view(-1, self.emb_sz)), dim=1).view(batch_size,
                                                                                                output_size, -1)
 
         # print('p_gen::shape', get_shape(p_gen))
         # print('vocab_dist::shape', get_shape(vocab_dist))
 
         if self.pointer_gen:
-            vocab_dist_ = p_gen * vocab_dist
-            attn_dist_ = (1 - p_gen) * attn
+            vocab_dist_ = p_gen * vocab_dist  # B x seq_len x output_size
+            attn_dist_ = (1 - p_gen) * attn  # B x seq_len x input_size
 
             if extra_zeros is not None:
                 vocab_dist_ = torch.cat([vocab_dist_, extra_zeros[:,:vocab_dist_.shape[1],:]], 2)
@@ -439,14 +439,14 @@ class DecoderRNN(BaseRNN):
             enc_batch_extend_vocab = enc_batch_extend_vocab.unsqueeze(1).expand(-1,attn_dist_.shape[1],-1)
 
             final_dist = vocab_dist_.scatter_add(2, enc_batch_extend_vocab, attn_dist_)
-            final_dist = function(final_dist, dim=2)
+            # final_dist = function(final_dist, dim=2)
         else:
             final_dist = vocab_dist
 
         return final_dist, hidden, attn
 
     def forward(self, input:Tuple[Tensor,Tuple])->Tuple[Tensor,Tensor,dict]:
-        raw_outputs, encoder_outputs, encoder_hidden, inputs, enc_batch_extend_vocab, extra_zeros = input
+        raw_outputs, encoder_outputs, encoder_hidden, inputs, enc_batch_extend_vocab, extra_zeros, dec_padding_mask, dec_lens = input
         outputs = encoder_outputs
         # encoder_outputs, encoder_hidden = input
 
@@ -503,16 +503,15 @@ class DecoderRNN(BaseRNN):
             if defaults.device == 'cuda' and torch.cuda.is_available():
                 initial_input = initial_input.cuda()
             decoder_input = torch.cat((initial_input, decoder_input), dim=1)
-            decoder_output, decoder_hidden, attn = self.forward_step(decoder_input, decoder_hidden, encoder_outputs,
-                                                                     enc_batch_extend_vocab, extra_zeros,
-                                                                     function=function)
 
-            for di in range(decoder_output.size(1)):
-                step_output = decoder_output[:, di, :]
-                if attn is not None:
-                    step_attn = attn[:, di, :]
-                else:
-                    step_attn = None
+            for di in range(max_length):
+                # print(get_shape(decoder_input))
+                # print(batch_size)
+                decoder_output, decoder_hidden, step_attn = self.forward_step(decoder_input[:,di].clone().unsqueeze(1),
+                                                                              decoder_hidden, encoder_outputs,
+                                                                              enc_batch_extend_vocab, extra_zeros,
+                                                                              function=function)
+                step_output = decoder_output.squeeze(1)
                 decode(di, step_output, step_attn)
         else:
             # decoder_input = inputs[:, 0].unsqueeze(1)
@@ -536,7 +535,7 @@ class DecoderRNN(BaseRNN):
         # print('decoder_outputs', get_shape(decoder_outputs))
 
         # print(get_shape(decoder_outputs))
-        return decoder_outputs, raw_outputs, outputs
+        return [decoder_outputs, dec_padding_mask, dec_lens], raw_outputs, outputs
 
     def _init_state(self, encoder_hidden):
         """ Initialize the encoder hidden state. """
