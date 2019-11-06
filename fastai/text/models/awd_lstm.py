@@ -425,7 +425,7 @@ class DecoderRNN(BaseRNN):
             p_gen = torch.sigmoid(p_gen)
 
         vocab_dist = F.softmax(self.out(output.contiguous().view(-1, self.emb_sz)), dim=1).view(batch_size,
-                                                                                               output_size, -1)
+                                                                                                output_size, -1)
 
         # print('p_gen::shape', get_shape(p_gen))
         # print('vocab_dist::shape', get_shape(vocab_dist))
@@ -612,7 +612,7 @@ def get_seq2seq(vocab_sz_inp:int, vocab_sz_out:int, emb_sz:int, n_hid:int, n_lay
     # enc = rnn_enc.encoder if tie_weights else None # TODO: tie encoder embedding weights to decoder last layer.
     # rnn_enc = RNNCore(bptt, max_seq, vocab_sz, emb_sz, n_hid, n_layers, pad_token=pad_token, bidir=bidir,
     #                   qrnn=qrnn, hidden_p=hidden_p, input_p=input_p, embed_p=embed_p, weight_p=weight_p)
-    rnn_dec = DecoderRNN(vocab_sz_out, emb_sz, max_len, hidden_size, 0, 1, n_layers, 'lstm', bidir, input_p, 0.1, True,
+    rnn_dec = DecoderRNN(vocab_sz_out, emb_sz, max_len, hidden_size, 2, 3, n_layers, 'lstm', bidir, input_p, 0.1, True,
                          teacher_forcing_ratio=teacher_forcing_ratio) # bptt, max_seq, hidden_size, vocab_sz, dropout_p=0.1, max_length=10)
     model = SequentialRNN(rnn_enc, rnn_dec)
     model.reset()
